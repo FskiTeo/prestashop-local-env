@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # Service Nginx (Reverse Proxy)
+  nginx:
+    image: nginx:stable-alpine
+    container_name: prestashop_nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./prestashop:/var/www/html
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - php
+    networks:
+      - prestashop-net
+    restart: unless-stopped
+
+  # Service PHP-FPM
+  php:
+    build:
+      context: ./docker/php
+    container_name: prestashop_php
+    volumes:
+      - ./prestashop:/var/www/html
+      - ./docker/php/custom.ini:/usr/local/etc/php/conf.d/custom.ini
+    environment:
+      # Configuration Xdebug pour se connecter à l'IDE sur l'hôte
+      XDEBUG_CONFIG: "client_host=host.docker.internal client_port=9003"
+      XDEBUG_MODE: "off" # Mettre à "debug" pour activer le débogage
+      # Configuration pour que PrestaShop utilise Mailhog
+      PHP_SENDMAIL_PATH: "/usr/bin/mhsendmail -t --smtp-addr=mailhog:1025"
+    depends_on:
+      - db
+      - mailhog
+    networks:
+      - prestashop-net
+    restart: unless-stopped
+
+  # Service Base de données MySQL
+  db:
+    image: mysql:8.0
+    container_name: prestashop_db
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+      # Script d'initialisation pour créer la base si elle n'existe pas
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - prestashop-net
+    restart: unless-stopped
+
+  # Service phpMyAdmin
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: prestashop_pma
+    ports:
+      - "${PMA_PORT:-8081}:80"
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    depends_on:
+      - db
+    networks:
+      - prestashop-net
+    restart: unless-stopped
+
+  # Service Mailhog pour la capture d'emails
+  mailhog:
+    image: mailhog/mailhog
+    container_name: prestashop_mailhog
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025" # Port SMTP
+      - "${MAILHOG_UI_PORT:-8025}:8025"   # Interface Web
+    networks:
+      - prestashop-net
+    restart: unless-stopped
+
+# Réseau interne pour la communication entre les conteneurs
+networks:
+  prestashop-net:
+    driver: bridge
+
+# Volumes persistants pour les données
+volumes:
+  db_data:
